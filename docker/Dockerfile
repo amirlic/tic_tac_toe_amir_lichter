@@ -36,7 +36,7 @@ COPY --chown=appuser:nodejs package*.json ./
 RUN apk add --no-cache dumb-init
 
 # Health check
-COPY --chown=appuser:nodejs healthcheck.js ./
+COPY --chown=appuser:nodejs docker/healthcheck.js ./
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD node healthcheck.js || exit 1
 

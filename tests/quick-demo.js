@@ -4,7 +4,7 @@
  * Human Refinements: Enhanced user experience, error handling
  */
 
-const TicTacToeServer = require('./src/server');
+const TicTacToeServer = require('../src/server');
 const WebSocket = require('ws');
 
 class QuickDemo {

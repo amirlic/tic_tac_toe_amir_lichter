@@ -19,7 +19,9 @@ services:
 
   # Game Server A
   server-a:
-    build: .
+    build: 
+      context: ..
+      dockerfile: docker/Dockerfile
     container_name: tic-tac-toe-server-a
     restart: unless-stopped
     ports:
@@ -40,7 +42,9 @@ services:
 
   # Game Server B
   server-b:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     container_name: tic-tac-toe-server-b
     restart: unless-stopped
     ports:

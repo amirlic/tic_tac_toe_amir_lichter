@@ -4,7 +4,7 @@
  * Human Refinements: None - AI generated comprehensive test coverage
  */
 
-const TicTacToeGame = require('./src/gameLogic');
+const TicTacToeGame = require('../src/gameLogic');
 
 class GameTester {
   constructor() {
