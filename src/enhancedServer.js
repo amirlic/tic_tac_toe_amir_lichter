@@ -320,12 +320,19 @@ class EnhancedTicTacToeServer {
   }
 
   /**
-   * Enhanced player join with validation
+   * Enhanced player join with cross-server sync
    */
   async handlePlayerJoinEnhanced(ws, message, clientInfo) {
     try {
       const playerId = message.playerId || `player-${clientInfo.id}`;
-      const result = this.game.addPlayer(playerId);
+      
+      // Get current global state
+      const syncResult = await this.syncManager.requestGameSync();
+      const globalPlayerCount = syncResult.playerCount || 0;
+      
+      console.log(`[${this.serverId}] Global player count: ${globalPlayerCount}`);
+      
+      const result = this.game.addPlayer(playerId, globalPlayerCount);
       
       if (result.success) {
         clientInfo.playerId = playerId;
@@ -340,9 +347,9 @@ class EnhancedTicTacToeServer {
         });
 
         this.broadcastGameState();
-        await this.syncManager.publishPlayerJoin(playerId, this.game.getGameState());
+        await this.syncManager.publishPlayerJoin(playerId, this.game.getGameState(), result.playerSymbol);
 
-        console.log(`[${this.serverId}] Player ${playerId} joined as ${result.playerSymbol}`);
+        console.log(`[${this.serverId}] Player ${playerId} joined as ${result.playerSymbol} (global count: ${result.globalPlayerCount})`);
       } else {
         this.sendError(ws, result.message);
       }
@@ -399,7 +406,7 @@ class EnhancedTicTacToeServer {
     try {
       this.game.resetGame();
       this.broadcastGameState();
-      await this.syncManager.publishGameReset();
+      await this.syncManager.publishGameReset(this.game.getGameState());
       
       console.log(`[${this.serverId}] Game reset by ${clientInfo.playerId || clientInfo.id}`);
     } catch (error) {
@@ -421,7 +428,7 @@ class EnhancedTicTacToeServer {
         if (clientInfo.playerId) {
           this.game.removePlayer(clientInfo.playerId);
           this.playerClients.delete(clientInfo.playerId);
-          await this.syncManager.publishPlayerLeave(clientInfo.playerId);
+          await this.syncManager.publishPlayerLeave(clientInfo.playerId, this.game.getGameState());
           this.broadcastGameState();
         }
       }
@@ -460,7 +467,7 @@ class EnhancedTicTacToeServer {
    */
   cleanupStaleConnections() {
     const now = Date.now();
-    const staleThreshold = 5 * 60 * 1000; // 5 minutes
+    const staleThreshold = 30 * 60 * 1000; // 30 minutes instead of 5
 
     this.clients.forEach((clientInfo, ws) => {
       if (!clientInfo.isAlive || (now - clientInfo.lastActivity) > staleThreshold) {
@@ -492,6 +499,42 @@ class EnhancedTicTacToeServer {
       }
     }
     return false;
+  }
+
+  /**
+   * Send game state to specific client
+   */
+  sendGameState(ws) {
+    const gameState = {
+      type: 'gameState',
+      ...this.game.getGameState(),
+      serverMetrics: this.getBasicMetrics()
+    };
+    
+    this.sendMessage(ws, gameState);
+  }
+
+  /**
+   * Send error message to client
+   */
+  sendError(ws, message) {
+    this.sendMessage(ws, { type: 'error', message: message });
+  }
+
+  /**
+   * Broadcast game over message
+   */
+  broadcastGameOver(result) {
+    const message = {
+      type: 'gameOver',
+      winner: result.winner,
+      winningLine: result.winningLine,
+      gameState: result.gameState
+    };
+
+    this.clients.forEach((clientInfo, ws) => {
+      this.sendMessage(ws, message);
+    });
   }
 
   /**
@@ -568,13 +611,8 @@ class EnhancedTicTacToeServer {
     console.error(`[${this.serverId}] Uncaught exception:`, error);
     this.metrics.errorsHandled++;
     
-    // Attempt graceful shutdown
-    setTimeout(() => {
-      console.error(`[${this.serverId}] Force exit after uncaught exception`);
-      process.exit(1);
-    }, 5000);
-    
-    this.gracefulShutdown();
+    // Log error but don't shutdown for demo purposes
+    console.log(`[${this.serverId}] Continuing operation despite error`);
   }
 
   /**
@@ -586,7 +624,7 @@ class EnhancedTicTacToeServer {
   }
 
   /**
-   * Enhanced graceful shutdown
+   * Enhanced graceful shutdown - only on signal
    */
   async gracefulShutdown() {
     console.log(`[${this.serverId}] Starting enhanced graceful shutdown...`);

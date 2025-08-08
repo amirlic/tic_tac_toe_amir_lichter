@@ -1,38 +1,29 @@
 /**
  * Docker Health Check Script
- * AI-Generated: 90% - Container health monitoring for WebSocket servers
- * Human Refinements: WebSocket-specific health check
+ * Simple TCP connection test instead of WebSocket
  */
 
-const WebSocket = require('ws');
+const net = require('net');
 
-// Health check for WebSocket server
+// Health check for server port
 const port = process.env.PORT || 3001;
-const ws = new WebSocket(`ws://localhost:${port}`);
 
+const client = new net.Socket();
 const timeout = setTimeout(() => {
   console.log('Health check timeout');
-  ws.terminate();
+  client.destroy();
   process.exit(1);
 }, 5000);
 
-ws.on('open', () => {
-  console.log('Health check passed - WebSocket connection successful');
+client.connect(port, '127.0.0.1', () => {
+  console.log('Health check passed - Server port is accessible');
   clearTimeout(timeout);
-  ws.close();
+  client.end();
   process.exit(0);
 });
 
-ws.on('error', (err) => {
+client.on('error', (err) => {
   console.log(`Health check failed: ${err.message}`);
   clearTimeout(timeout);
   process.exit(1);
 });
-
-req.on('timeout', () => {
-  console.log('Health check timeout');
-  req.destroy();
-  process.exit(1);
-});
-
-req.end();

@@ -1,5 +1,5 @@
 /**
- * Enhanced Redis Sync Manager with Network Resilience & Performance Optimizations
+ * Enhanced Redis Sync Manager with Cross-Server Game State Synchronization
  * AI-Generated: 90% - Advanced retry logic, connection pooling, message batching
  * Human Refinements: Production-grade network resilience patterns
  */
@@ -99,34 +99,32 @@ class EnhancedRedisSyncManager {
 
       // Enhanced error handling
       this.setupErrorHandlers();
-      this.setupConnectionHandlers();
 
       // Connect with timeout
-      const connectionPromise = Promise.all([
-        this.connectWithTimeout(this.publisher, 'Publisher'),
-        this.connectWithTimeout(this.subscriber, 'Subscriber')
+      await Promise.race([
+        Promise.all([
+          this.publisher.connect(),
+          this.subscriber.connect()
+        ]),
+        this.sleep(10000).then(() => Promise.reject(new Error('Connection timeout')))
       ]);
-
-      await connectionPromise;
 
       // Subscribe to sync channel
       await this.subscriber.subscribe(this.channelName, (message) => {
-        this.handleSyncMessageSafely(message);
+        this.handleSyncMessage(message);
       });
 
       this.isConnected = true;
-      this.reconnectAttempts = 0;
       this.circuitBreaker.state = 'CLOSED';
       this.circuitBreaker.failures = 0;
-      
-      console.log(`[${this.serverId}] Enhanced Redis sync initialized successfully`);
-      this.startBatchProcessor();
-      
+      this.reconnectAttempts = 0;
+
+      console.log(`[${this.serverId}] Enhanced Redis connection established successfully`);
       return true;
 
     } catch (error) {
-      console.error(`[${this.serverId}] Enhanced Redis initialization failed:`, error.message);
-      this.handleConnectionFailure(error);
+      console.error(`[${this.serverId}] Redis initialization failed:`, error.message);
+      this.handleConnectionFailure();
       return false;
     }
   }
@@ -136,109 +134,74 @@ class EnhancedRedisSyncManager {
    */
   createReconnectStrategy() {
     return (retries) => {
-      if (retries > this.maxReconnectAttempts) {
-        console.error(`[${this.serverId}] Max Redis reconnection attempts reached`);
+      if (retries >= this.maxReconnectAttempts) {
+        console.error(`[${this.serverId}] Max reconnection attempts reached`);
         return false;
       }
       
       const delay = Math.min(this.reconnectDelay * Math.pow(2, retries), 30000);
-      console.log(`[${this.serverId}] Redis reconnection attempt ${retries + 1} in ${delay}ms`);
+      console.log(`[${this.serverId}] Reconnecting in ${delay}ms (attempt ${retries + 1})`);
       return delay;
     };
-  }
-
-  /**
-   * Connect with timeout wrapper
-   */
-  async connectWithTimeout(client, type, timeout = 10000) {
-    return new Promise((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        reject(new Error(`${type} connection timeout after ${timeout}ms`));
-      }, timeout);
-
-      client.connect()
-        .then(() => {
-          clearTimeout(timeoutId);
-          console.log(`[${this.serverId}] Redis ${type} connected successfully`);
-          resolve();
-        })
-        .catch((error) => {
-          clearTimeout(timeoutId);
-          reject(error);
-        });
-    });
   }
 
   /**
    * Setup enhanced error handlers
    */
   setupErrorHandlers() {
-    this.publisher.on('error', (err) => this.handleRedisError('Publisher', err));
-    this.subscriber.on('error', (err) => this.handleRedisError('Subscriber', err));
-    
-    this.publisher.on('end', () => {
-      console.log(`[${this.serverId}] Redis Publisher connection ended`);
-      this.isConnected = false;
-    });
-    
-    this.subscriber.on('end', () => {
-      console.log(`[${this.serverId}] Redis Subscriber connection ended`);
-    });
+    if (this.publisher) {
+      this.publisher.on('error', (error) => {
+        console.error(`[${this.serverId}] Publisher error:`, error.message);
+        this.handleConnectionFailure();
+      });
+
+      this.publisher.on('reconnecting', () => {
+        console.log(`[${this.serverId}] Publisher reconnecting...`);
+        this.metrics.reconnections++;
+      });
+    }
+
+    if (this.subscriber) {
+      this.subscriber.on('error', (error) => {
+        console.error(`[${this.serverId}] Subscriber error:`, error.message);
+        this.handleConnectionFailure();
+      });
+
+      this.subscriber.on('reconnecting', () => {
+        console.log(`[${this.serverId}] Subscriber reconnecting...`);
+      });
+    }
   }
 
   /**
-   * Setup connection event handlers
+   * Handle connection failures with circuit breaker
    */
-  setupConnectionHandlers() {
-    this.publisher.on('ready', () => {
-      console.log(`[${this.serverId}] Redis Publisher ready`);
-      this.isConnected = true;
-      this.reconnectAttempts = 0;
-      this.metrics.reconnections++;
-    });
+  handleConnectionFailure() {
+    this.isConnected = false;
+    this.circuitBreaker.failures++;
+    this.circuitBreaker.lastFailure = Date.now();
+    this.metrics.errors++;
 
-    this.subscriber.on('ready', () => {
-      console.log(`[${this.serverId}] Redis Subscriber ready`);
-    });
-
-    this.publisher.on('reconnecting', () => {
-      console.log(`[${this.serverId}] Redis Publisher reconnecting...`);
-      this.isConnected = false;
-    });
-
-    this.subscriber.on('reconnecting', () => {
-      console.log(`[${this.serverId}] Redis Subscriber reconnecting...`);
-    });
+    if (this.circuitBreaker.failures >= this.circuitBreaker.threshold) {
+      this.circuitBreaker.state = 'OPEN';
+      console.log(`[${this.serverId}] Circuit breaker OPEN due to repeated failures`);
+    }
   }
 
   /**
-   * Handle sync messages with error boundaries
+   * Handle incoming sync messages with validation
    */
-  handleSyncMessageSafely(message) {
-    const startTime = Date.now();
-    
+  handleSyncMessage(message) {
     try {
       const data = JSON.parse(message);
       
-      // Ignore messages from this server (avoid loops)
-      if (data.serverId === this.serverId) {
+      if (!this.isValidSyncMessage(data)) {
+        console.warn(`[${this.serverId}] Invalid sync message received`);
         return;
       }
 
-      // Validate message structure
-      if (!this.validateSyncMessage(data)) {
-        console.warn(`[${this.serverId}] Invalid sync message format`);
-        return;
-      }
-
-      console.log(`[${this.serverId}] Received sync message: ${data.type} from ${data.serverId}`);
-
-      this.processSyncMessage(data);
-      
-      // Update metrics
       this.metrics.messagesReceived++;
-      this.metrics.lastSuccessfulSync = Date.now();
-      this.updateLatencyMetrics(Date.now() - startTime);
+      this.processSyncMessage(data);
 
     } catch (error) {
       console.error(`[${this.serverId}] Error processing sync message:`, error.message);
@@ -249,11 +212,13 @@ class EnhancedRedisSyncManager {
   /**
    * Validate sync message structure
    */
-  validateSyncMessage(data) {
+  isValidSyncMessage(data) {
     return (
       data &&
+      typeof data === 'object' &&
       typeof data.type === 'string' &&
       typeof data.serverId === 'string' &&
+      data.serverId !== this.serverId &&
       typeof data.timestamp === 'number' &&
       data.timestamp > 0
     );
@@ -283,6 +248,12 @@ class EnhancedRedisSyncManager {
         case 'heartbeat':
           this.handleHeartbeat(data);
           break;
+        case 'sync_request':
+          this.handleSyncRequest(data);
+          break;
+        case 'sync_response':
+          this.handleSyncResponse(data);
+          break;
         default:
           console.warn(`[${this.serverId}] Unknown sync message type: ${data.type}`);
       }
@@ -293,18 +264,247 @@ class EnhancedRedisSyncManager {
   }
 
   /**
-   * Enhanced state update handling
+   * Get global player count from Redis
    */
-  handleStateUpdateEnhanced(data) {
-    if (data.gameState && this.isValidGameState(data.gameState)) {
-      const currentTimestamp = this.gameInstance.getGameState().timestamp || 0;
-      const incomingTimestamp = data.timestamp;
-      
-      // Only apply if incoming state is newer
-      if (incomingTimestamp > currentTimestamp) {
-        this.gameInstance.updateState(data.gameState);
-        console.log(`[${this.serverId}] Game state synchronized from ${data.serverId}`);
+  async getGlobalPlayerCount() {
+    if (!this.isConnected) return 0;
+    
+    try {
+      const globalState = await this.publisher.get('global_game_state');
+      if (globalState) {
+        const state = JSON.parse(globalState);
+        return state.playerCount || 0;
       }
+      return 0;
+    } catch (error) {
+      console.error(`[${this.serverId}] Failed to get global player count:`, error.message);
+      return 0;
+    }
+  }
+
+  /**
+   * Update global player count in Redis
+   */
+  async updateGlobalPlayerCount(count) {
+    if (!this.isConnected) return false;
+    
+    try {
+      const globalState = {
+        playerCount: count,
+        lastUpdated: Date.now(),
+        updatedBy: this.serverId
+      };
+      
+      await this.publisher.set('global_game_state', JSON.stringify(globalState));
+      return true;
+    } catch (error) {
+      console.error(`[${this.serverId}] Failed to update global player count:`, error.message);
+      return false;
+    }
+  }
+
+  /**
+   * Request current game state from other servers
+   */
+  async requestGameSync() {
+    if (!this.isConnected) return { playerCount: 0 };
+    
+    try {
+      // Get global state first
+      const globalPlayerCount = await this.getGlobalPlayerCount();
+      
+      const message = {
+        type: 'sync_request',
+        serverId: this.serverId,
+        timestamp: Date.now()
+      };
+      
+      await this.publisher.publish(this.channelName, JSON.stringify(message));
+      
+      // Wait a moment for responses
+      await this.sleep(100);
+      
+      return { playerCount: globalPlayerCount };
+    } catch (error) {
+      console.error(`[${this.serverId}] Failed to request game sync:`, error.message);
+      return { playerCount: 0 };
+    }
+  }
+
+  /**
+   * Respond to sync request with current game state
+   */
+  async handleSyncRequest(data) {
+    if (data.serverId === this.serverId) return; // Don't respond to own requests
+    
+    try {
+      const gameState = this.gameInstance.getGameState();
+      if (gameState.players.length > 0) {
+        const response = {
+          type: 'sync_response',
+          serverId: this.serverId,
+          gameState: gameState,
+          timestamp: Date.now()
+        };
+        
+        await this.publisher.publish(this.channelName, JSON.stringify(response));
+        console.log(`[${this.serverId}] Sent sync response to ${data.serverId}`);
+      }
+    } catch (error) {
+      console.error(`[${this.serverId}] Failed to respond to sync request:`, error.message);
+    }
+  }
+
+  /**
+   * Handle sync response from other servers
+   */
+  handleSyncResponse(data) {
+    if (data.serverId === this.serverId) return; // Ignore own responses
+    
+    if (data.gameState && this.isValidGameState(data.gameState)) {
+      // Only update if the response has more players
+      const currentPlayers = this.gameInstance.getGameState().players.length;
+      const responsePlayers = data.gameState.players.length;
+      
+      if (responsePlayers > currentPlayers) {
+        this.gameInstance.updateState(data.gameState);
+        console.log(`[${this.serverId}] Updated game state from ${data.serverId} (${responsePlayers} players)`);
+      }
+    }
+  }
+
+  /**
+   * Publish player join with global state update
+   */
+  async publishPlayerJoin(playerId, gameState, playerSymbol) {
+    // Update global player count
+    const currentCount = await this.getGlobalPlayerCount();
+    const newCount = currentCount + 1;
+    await this.updateGlobalPlayerCount(newCount);
+    
+    const message = {
+      type: 'playerJoin',
+      serverId: this.serverId,
+      playerId: playerId,
+      playerSymbol: playerSymbol,
+      gameState: gameState,
+      globalPlayerCount: newCount,
+      timestamp: Date.now()
+    };
+
+    return this.queueMessage(message);
+  }
+
+  /**
+   * Publish player leave with global state update
+   */
+  async publishPlayerLeave(playerId, gameState) {
+    // Update global player count
+    const currentCount = await this.getGlobalPlayerCount();
+    const newCount = Math.max(0, currentCount - 1);
+    await this.updateGlobalPlayerCount(newCount);
+    
+    const message = {
+      type: 'playerLeave',
+      serverId: this.serverId,
+      playerId: playerId,
+      gameState: gameState,
+      globalPlayerCount: newCount,
+      timestamp: Date.now()
+    };
+
+    return this.queueMessage(message);
+  }
+
+  /**
+   * Publish move with enhanced validation
+   */
+  async publishMove(moveData, gameState) {
+    const message = {
+      type: 'move',
+      serverId: this.serverId,
+      move: moveData,
+      gameState: gameState,
+      timestamp: Date.now()
+    };
+
+    return this.queueMessage(message);
+  }
+
+  /**
+   * Publish game reset with global state reset
+   */
+  async publishGameReset(gameState) {
+    // Reset global player count
+    await this.updateGlobalPlayerCount(0);
+    
+    const message = {
+      type: 'gameReset',
+      serverId: this.serverId,
+      gameState: gameState,
+      globalPlayerCount: 0,
+      timestamp: Date.now()
+    };
+
+    return this.queueMessage(message);
+  }
+
+  /**
+   * Queue message for batched sending
+   */
+  async queueMessage(message) {
+    if (!this.isConnected) {
+      console.warn(`[${this.serverId}] Cannot queue message - Redis not connected`);
+      return false;
+    }
+
+    this.messageQueue.push(message);
+
+    // Process immediately if queue is full
+    if (this.messageQueue.length >= this.batchSize) {
+      return this.processBatch();
+    }
+
+    // Set timer for batch processing
+    if (!this.batchTimer) {
+      this.batchTimer = setTimeout(() => {
+        this.processBatch();
+      }, this.batchTimeout);
+    }
+
+    return true;
+  }
+
+  /**
+   * Process message batch
+   */
+  async processBatch() {
+    if (this.messageQueue.length === 0) return true;
+
+    const batch = [...this.messageQueue];
+    this.messageQueue = [];
+
+    if (this.batchTimer) {
+      clearTimeout(this.batchTimer);
+      this.batchTimer = null;
+    }
+
+    try {
+      const pipeline = this.publisher.multi();
+      
+      for (const message of batch) {
+        pipeline.publish(this.channelName, JSON.stringify(message));
+      }
+
+      await pipeline.exec();
+      this.metrics.messagesSent += batch.length;
+      this.metrics.lastSuccessfulSync = Date.now();
+
+      return true;
+    } catch (error) {
+      console.error(`[${this.serverId}] Batch processing failed:`, error.message);
+      this.handleConnectionFailure();
+      return false;
     }
   }
 
@@ -317,243 +517,56 @@ class EnhancedRedisSyncManager {
       Array.isArray(gameState.board) &&
       gameState.board.length === 3 &&
       typeof gameState.currentPlayer === 'string' &&
-      typeof gameState.gameStatus === 'string'
+      typeof gameState.gameStatus === 'string' &&
+      Array.isArray(gameState.players)
     );
   }
 
   /**
-   * Enhanced message publishing with batching and retry
+   * Enhanced handlers for different message types
    */
-  async publishMessage(message) {
-    if (!this.isConnected) {
-      console.warn(`[${this.serverId}] Cannot publish - Redis not connected`);
-      return false;
-    }
-
-    if (this.circuitBreaker.state === 'OPEN') {
-      console.warn(`[${this.serverId}] Cannot publish - Circuit breaker OPEN`);
-      return false;
-    }
-
-    try {
-      // Add message to batch queue
-      this.messageQueue.push({
-        ...message,
-        timestamp: Date.now(),
-        retryCount: 0
-      });
-
-      // Trigger batch processing
-      this.triggerBatchProcess();
-      return true;
-
-    } catch (error) {
-      console.error(`[${this.serverId}] Error queueing message:`, error.message);
-      this.handlePublishError(error);
-      return false;
+  handlePlayerJoinEnhanced(data) {
+    if (data.gameState && this.isValidGameState(data.gameState)) {
+      // Update local state from global state
+      this.gameInstance.updateState(data.gameState);
+      console.log(`[${this.serverId}] Player ${data.playerId} joined as ${data.playerSymbol} (from ${data.serverId})`);
     }
   }
 
-  /**
-   * Trigger batch processing with debouncing
-   */
-  triggerBatchProcess() {
-    if (this.batchTimer) {
-      clearTimeout(this.batchTimer);
+  handlePlayerLeaveEnhanced(data) {
+    if (data.playerId) {
+      this.gameInstance.removePlayer(data.playerId);
     }
+  }
 
-    // If queue is full, process immediately
-    if (this.messageQueue.length >= this.batchSize) {
-      this.processBatch();
-    } else {
-      // Otherwise, wait for batch timeout
-      this.batchTimer = setTimeout(() => {
-        this.processBatch();
-      }, this.batchTimeout);
+  handleMoveSyncEnhanced(data) {
+    if (data.gameState && this.isValidGameState(data.gameState)) {
+      this.gameInstance.updateState(data.gameState);
+      console.log(`[${this.serverId}] Move synchronized from ${data.serverId}`);
+    }
+  }
+
+  handleGameResetEnhanced(data) {
+    this.gameInstance.resetGame();
+    console.log(`[${this.serverId}] Game reset synchronized from ${data.serverId}`);
+  }
+
+  handleHeartbeat(data) {
+    console.log(`[${this.serverId}] Heartbeat from ${data.serverId}:`, data.metrics);
+  }
+
+  handleStateUpdateEnhanced(data) {
+    if (data.gameState && this.isValidGameState(data.gameState)) {
+      this.gameInstance.updateState(data.gameState);
+      console.log(`[${this.serverId}] State updated from ${data.serverId}`);
     }
   }
 
   /**
-   * Process message batch
+   * Utility sleep function
    */
-  async processBatch() {
-    if (this.messageQueue.length === 0) return;
-
-    const batch = this.messageQueue.splice(0, this.batchSize);
-    
-    try {
-      // Process batch in parallel with retry logic
-      const publishPromises = batch.map(message => this.publishSingleMessage(message));
-      await Promise.allSettled(publishPromises);
-      
-      this.metrics.messagesSent += batch.length;
-      
-    } catch (error) {
-      console.error(`[${this.serverId}] Batch processing error:`, error.message);
-      
-      // Re-queue failed messages
-      batch.forEach(message => {
-        if (message.retryCount < 3) {
-          message.retryCount++;
-          this.messageQueue.unshift(message);
-        }
-      });
-    }
-  }
-
-  /**
-   * Publish single message with retry
-   */
-  async publishSingleMessage(message, maxRetries = 3) {
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        await this.publisher.publish(this.channelName, JSON.stringify(message));
-        return true;
-      } catch (error) {
-        console.error(`[${this.serverId}] Publish attempt ${attempt} failed:`, error.message);
-        
-        if (attempt === maxRetries) {
-          this.handlePublishError(error);
-          throw error;
-        }
-        
-        // Wait before retry
-        await this.sleep(100 * attempt);
-      }
-    }
-  }
-
-  /**
-   * Start batch processor
-   */
-  startBatchProcessor() {
-    // Process any remaining messages every 5 seconds
-    setInterval(() => {
-      if (this.messageQueue.length > 0) {
-        this.processBatch();
-      }
-    }, 5000);
-  }
-
-  /**
-   * Enhanced publish methods with the new batching system
-   */
-  async publishStateUpdate(gameState) {
-    return this.publishMessage({
-      type: 'stateUpdate',
-      serverId: this.serverId,
-      gameState: gameState
-    });
-  }
-
-  async publishPlayerJoin(playerId, gameState) {
-    return this.publishMessage({
-      type: 'playerJoin',
-      serverId: this.serverId,
-      playerId: playerId,
-      gameState: gameState
-    });
-  }
-
-  async publishPlayerLeave(playerId) {
-    return this.publishMessage({
-      type: 'playerLeave',
-      serverId: this.serverId,
-      playerId: playerId
-    });
-  }
-
-  async publishMove(moveData, gameState) {
-    return this.publishMessage({
-      type: 'move',
-      serverId: this.serverId,
-      move: moveData,
-      gameState: gameState
-    });
-  }
-
-  async publishGameReset() {
-    return this.publishMessage({
-      type: 'gameReset',
-      serverId: this.serverId
-    });
-  }
-
-  async publishHeartbeat() {
-    return this.publishMessage({
-      type: 'heartbeat',
-      serverId: this.serverId,
-      metrics: this.getMetrics()
-    });
-  }
-
-  /**
-   * Handle Redis connection errors with circuit breaker
-   */
-  handleRedisError(clientType, error) {
-    this.metrics.errors++;
-    this.circuitBreaker.failures++;
-    this.circuitBreaker.lastFailure = Date.now();
-    
-    if (this.circuitBreaker.failures >= this.circuitBreaker.threshold) {
-      this.circuitBreaker.state = 'OPEN';
-      console.error(`[${this.serverId}] Circuit breaker OPEN after ${this.circuitBreaker.failures} failures`);
-    }
-
-    // Only log first error to avoid spam
-    if (this.reconnectAttempts === 0) {
-      console.error(`[${this.serverId}] Redis ${clientType} error:`, error.message);
-    }
-    
-    this.isConnected = false;
-    this.scheduleReconnection();
-  }
-
-  /**
-   * Handle publish errors
-   */
-  handlePublishError(error) {
-    this.metrics.errors++;
-    console.error(`[${this.serverId}] Publish error:`, error.message);
-  }
-
-  /**
-   * Handle connection failures
-   */
-  handleConnectionFailure(error) {
-    this.circuitBreaker.failures++;
-    this.circuitBreaker.lastFailure = Date.now();
-    
-    if (this.circuitBreaker.failures >= this.circuitBreaker.threshold) {
-      this.circuitBreaker.state = 'OPEN';
-    }
-  }
-
-  /**
-   * Schedule reconnection with exponential backoff
-   */
-  scheduleReconnection() {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.error(`[${this.serverId}] Max reconnection attempts reached`);
-      return;
-    }
-
-    this.reconnectAttempts++;
-    const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 30000);
-    
-    setTimeout(() => {
-      if (!this.isConnected) {
-        console.log(`[${this.serverId}] Attempting Redis reconnection ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
-        this.initialize();
-      }
-    }, delay);
-  }
-
-  /**
-   * Update latency metrics
-   */
-  updateLatencyMetrics(latency) {
-    this.metrics.avgLatency = (this.metrics.avgLatency * 0.9) + (latency * 0.1);
+  sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   /**
@@ -614,42 +627,6 @@ class EnhancedRedisSyncManager {
     } catch (error) {
       console.error(`[${this.serverId}] Error during enhanced cleanup:`, error.message);
     }
-  }
-
-  /**
-   * Utility sleep function
-   */
-  sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  // Enhanced handlers for different message types
-  handlePlayerJoinEnhanced(data) {
-    if (data.gameState && this.isValidGameState(data.gameState)) {
-      this.gameInstance.updateState(data.gameState);
-    }
-  }
-
-  handlePlayerLeaveEnhanced(data) {
-    if (data.playerId) {
-      this.gameInstance.removePlayer(data.playerId);
-    }
-  }
-
-  handleMoveSyncEnhanced(data) {
-    if (data.gameState && this.isValidGameState(data.gameState)) {
-      this.gameInstance.updateState(data.gameState);
-      console.log(`[${this.serverId}] Move synchronized from ${data.serverId}`);
-    }
-  }
-
-  handleGameResetEnhanced(data) {
-    this.gameInstance.resetGame();
-    console.log(`[${this.serverId}] Game reset synchronized from ${data.serverId}`);
-  }
-
-  handleHeartbeat(data) {
-    console.log(`[${this.serverId}] Heartbeat from ${data.serverId}:`, data.metrics);
   }
 }
 

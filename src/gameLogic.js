@@ -19,12 +19,16 @@ class TicTacToeGame {
   }
 
   /**
-   * Add a player to the game
+   * Add a player to the game with global player counting
    * @param {string} playerId - Unique player identifier
+   * @param {number} globalPlayerCount - Total players across all servers
    * @returns {object} Player assignment result
    */
-  addPlayer(playerId) {
-    if (this.players.size >= 2) {
+  addPlayer(playerId, globalPlayerCount = 0) {
+    // Use global count to determine symbol, not local count
+    const totalPlayers = Math.max(this.players.size, globalPlayerCount);
+    
+    if (totalPlayers >= 2) {
       return { success: false, message: 'Game is full' };
     }
 
@@ -32,7 +36,8 @@ class TicTacToeGame {
       return { success: false, message: 'Player already in game' };
     }
 
-    const playerSymbol = this.players.size === 0 ? 'X' : 'O';
+    // First player globally gets X, second gets O
+    const playerSymbol = totalPlayers === 0 ? 'X' : 'O';
     this.players.add(playerId);
     
     if (this.players.size === 2) {
@@ -43,6 +48,7 @@ class TicTacToeGame {
       success: true, 
       playerSymbol, 
       gameStatus: this.gameStatus,
+      globalPlayerCount: totalPlayers + 1,
       message: `You are player ${playerSymbol}` 
     };
   }
@@ -228,7 +234,11 @@ class TicTacToeGame {
     this.gameStatus = newState.gameStatus;
     this.winner = newState.winner;
     this.moveCount = newState.moveCount;
-    // Note: players set is managed locally per server
+    
+    // Update players set from array
+    if (newState.players && Array.isArray(newState.players)) {
+      this.players = new Set(newState.players);
+    }
   }
 }
 

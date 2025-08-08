@@ -30,6 +30,8 @@ services:
       - PORT=3001
       - SERVER_ID=server-a
       - REDIS_URL=redis://redis:6379
+      - NODE_ENV=production
+      - DEBUG=tic-tac-toe:*
     depends_on:
       - redis
     networks:
@@ -53,6 +55,8 @@ services:
       - PORT=3002
       - SERVER_ID=server-b
       - REDIS_URL=redis://redis:6379
+      - NODE_ENV=production
+      - DEBUG=tic-tac-toe:*
     depends_on:
       - redis
     networks:
