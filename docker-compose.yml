@@ -2,8 +2,6 @@
 # AI-Generated: 90% - Complete orchestration with Redis, monitoring, networking
 # Human Refinements: Production-ready configuration
 
-version: '3.8'
-
 services:
   # Redis for inter-server synchronization
   redis:

@@ -7,7 +7,7 @@
 const WebSocket = require('ws');
 const { v4: uuidv4 } = require('uuid');
 const TicTacToeGame = require('./gameLogic');
-const RedisSyncManager = require('./redisSync');
+const EnhancedRedisSyncManager = require('./enhancedRedisSync');
 
 class EnhancedTicTacToeServer {
   constructor(port) {
@@ -17,7 +17,7 @@ class EnhancedTicTacToeServer {
     this.game = new TicTacToeGame();
     this.clients = new Map();
     this.playerClients = new Map();
-    this.syncManager = new RedisSyncManager(this.serverId, this.game);
+    this.syncManager = new EnhancedRedisSyncManager(this.serverId, this.game);
     
     // Performance & Monitoring
     this.metrics = {
@@ -54,6 +54,7 @@ class EnhancedTicTacToeServer {
       // Create WebSocket server with performance options
       this.wss = new WebSocket.Server({ 
         port: this.port,
+        host: '0.0.0.0', // Bind to all interfaces for Docker
         perMessageDeflate: {
           threshold: 1024,
           concurrencyLimit: 10,
@@ -628,7 +629,7 @@ class EnhancedTicTacToeServer {
 
 // Start server if run directly
 if (require.main === module) {
-  const port = process.argv[2] || 3001;
+  const port = process.env.PORT || process.argv[2] || 3001;
   const server = new EnhancedTicTacToeServer(parseInt(port));
   server.start();
 }

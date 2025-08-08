@@ -12,7 +12,7 @@ WORKDIR /usr/src/app
 COPY package*.json ./
 
 # Install dependencies (including dev dependencies for build)
-RUN npm ci --only=production && npm cache clean --force
+RUN npm install --only=production && npm cache clean --force
 
 # Copy source code
 COPY src/ ./src/
@@ -54,8 +54,8 @@ ENV REDIS_PORT=6379
 # Use dumb-init to handle signals properly
 ENTRYPOINT ["dumb-init", "--"]
 
-# Default command (can be overridden)
-CMD ["node", "src/enhancedServer.js", "3001"]
+# Default command - port will be set via environment variable
+CMD ["node", "src/enhancedServer.js"]
 
 # Labels for metadata
 LABEL version="1.0.0"
