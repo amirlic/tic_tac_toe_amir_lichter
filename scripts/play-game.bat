@@ -1,25 +1,62 @@
 @echo off
 echo 🎮 Tic-Tac-Toe Game Launcher
+echo ==========================
 echo.
-echo Choose your connection:
-echo 1. Connect to Server A (Port 3001)
-echo 2. Connect to Server B (Port 3002)
-echo 3. Exit
+
+REM Check if Docker is running
+docker ps >nul 2>&1
+if errorlevel 1 (
+    echo ❌ Docker is not running or not accessible!
+    echo Please start Docker Desktop and try again.
+    pause
+    exit /b 1
+)
+
+REM Check if servers are running
+echo Checking server status...
+docker-compose -f ../docker/docker-compose.yml ps --format json >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo ⚠️  Servers are not running!
+    echo Would you like to start them now? (Y/N)
+    set /p startServers="Enter choice: "
+    if /i "%startServers%"=="Y" (
+        echo Starting servers...
+        docker-compose -f ../docker/docker-compose.yml up -d
+        echo Waiting for servers to be ready...
+        timeout /t 5 /nobreak >nul
+    ) else (
+        echo Please run "run-demo.bat" or "quick-demo.bat" first to start the servers.
+        pause
+        exit /b 1
+    )
+)
+
 echo.
-set /p choice="Enter your choice (1-3): "
+echo ✅ Servers are ready!
+echo.
+echo Choose your action:
+echo 1. Start Interactive Game Client
+echo 2. Exit
+echo.
+set /p choice="Enter your choice (1-2): "
 
 if "%choice%"=="1" (
-    echo Starting game client for Server A...
-    node src/client.js ws://localhost:3001
+    echo.
+    echo 🚀 Starting interactive game client...
+    echo You'll be able to choose your server inside the game.
+    cd /d "%~dp0.."
+    node src/client.js
+    goto :end
 ) else if "%choice%"=="2" (
-    echo Starting game client for Server B...
-    node src/client.js ws://localhost:3002
-) else if "%choice%"=="3" (
-    echo Goodbye!
+    echo Goodbye! 👋
     exit /b 0
 ) else (
     echo Invalid choice! Please run the script again.
     pause
+    exit /b 1
 )
+
+:end
 
 pause
