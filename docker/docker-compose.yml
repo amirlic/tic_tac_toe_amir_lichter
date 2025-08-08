@@ -1,6 +1,5 @@
-# Docker Compose for Real-Time Tic-Tac-Toe Game
-# AI-Generated: 90% - Complete orchestration with Redis, monitoring, networking
-# Human Refinements: Production-ready configuration
+# Simplified Docker Compose for Tic-Tac-Toe Game
+# Essential services only for easy setup
 
 services:
   # Redis for inter-server synchronization
@@ -10,149 +9,63 @@ services:
     restart: unless-stopped
     ports:
       - "6379:6379"
-    volumes:
-      - redis_data:/data
-      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
-    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - tic-tac-toe-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
-      timeout: 3s
+      timeout: 5s
       retries: 3
-    networks:
-      - tic-tac-toe-network
-    environment:
-      - REDIS_REPLICATION_MODE=master
 
-  # Game Server A (Port 3001)
+  # Game Server A
   server-a:
-    build: .
+    build: 
+      context: ..
+      dockerfile: docker/Dockerfile
     container_name: tic-tac-toe-server-a
     restart: unless-stopped
     ports:
       - "3001:3001"
     environment:
-      - NODE_ENV=production
-      - WS_PORT=3001
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
+      - PORT=3001
       - SERVER_ID=server-a
+      - REDIS_URL=redis://redis:6379
     depends_on:
-      redis:
-        condition: service_healthy
+      - redis
+    networks:
+      - tic-tac-toe-network
     healthcheck:
       test: ["CMD", "node", "healthcheck.js"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
-    networks:
-      - tic-tac-toe-network
-    command: ["node", "src/enhancedServer.js", "3001"]
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
-  # Game Server B (Port 3002)
+  # Game Server B
   server-b:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     container_name: tic-tac-toe-server-b
     restart: unless-stopped
     ports:
       - "3002:3002"
     environment:
-      - NODE_ENV=production
-      - WS_PORT=3002
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
+      - PORT=3002
       - SERVER_ID=server-b
+      - REDIS_URL=redis://redis:6379
     depends_on:
-      redis:
-        condition: service_healthy
+      - redis
+    networks:
+      - tic-tac-toe-network
     healthcheck:
       test: ["CMD", "node", "healthcheck.js"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
-    networks:
-      - tic-tac-toe-network
-    command: ["node", "src/enhancedServer.js", "3002"]
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # Load Balancer (optional)
-  nginx:
-    image: nginx:alpine
-    container_name: tic-tac-toe-nginx
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./ssl:/etc/nginx/ssl:ro
-    depends_on:
-      - server-a
-      - server-b
-    networks:
-      - tic-tac-toe-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "5m"
-        max-file: "3"
-
-  # Monitoring with Prometheus (optional)
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: tic-tac-toe-prometheus
-    restart: unless-stopped
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
-    networks:
-      - tic-tac-toe-network
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
-      - '--web.enable-lifecycle'
-
-  # Grafana for metrics visualization (optional)
-  grafana:
-    image: grafana/grafana:latest
-    container_name: tic-tac-toe-grafana
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin123
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-    networks:
-      - tic-tac-toe-network
-
-volumes:
-  redis_data:
-    driver: local
-  prometheus_data:
-    driver: local
-  grafana_data:
-    driver: local
 
 networks:
   tic-tac-toe-network:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
+
+volumes:
+  redis_data:
