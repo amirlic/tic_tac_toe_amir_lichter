@@ -18,44 +18,64 @@ Client A ←→ Server A (3001) ←→ Redis Pub/Sub ←→ Server B (3002) ←�
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Node.js 16+ 
-- Redis server running on localhost:6379
+- **Node.js 16+** (Download from [nodejs.org](https://nodejs.org/))
+- **Redis server** (Optional for single-server testing, required for multi-server sync)
+
+#### Install Redis on Windows:
+```bash
+# Option 1: Via Chocolatey
+choco install redis-64
+
+# Option 2: Download and install from redis.io
+# Then start: redis-server
+```
 
 ### Installation
 ```bash
+git clone <repository-url>
+cd tic_tac_toe_amir_lichter
 npm install
 ```
 
-### Start Redis (Windows)
+### 🎮 Quick Demo (No Redis Required)
 ```bash
-# Install Redis via Chocolatey or download from Redis website
-redis-server
+# Test servers without Redis dependency
+node quick-demo.js
 ```
 
-### Run the Game
+### 🔧 Full Setup with Redis Synchronization
 
-1. **Start both servers:**
+#### Method 1: PowerShell Automation (Recommended)
+```powershell
+# Interactive setup menu
+.\Start-Game.ps1
+
+# Or direct commands:
+.\Start-Game.ps1 -Action dev     # Full development environment
+.\Start-Game.ps1 -Action servers # Start both servers
+```
+
+#### Method 2: Manual Setup
 ```bash
-# Terminal 1 - Server A
+# Terminal 1 - Start Redis
+redis-server
+
+# Terminal 2 - Server A
 npm run start:server1
 
-# Terminal 2 - Server B  
+# Terminal 3 - Server B  
 npm run start:server2
+
+# Terminal 4 & 5 - Game Clients
+npm run start:client
+npm run start:client
 ```
 
-2. **Connect two clients:**
+#### Method 3: Windows Batch File
 ```bash
-# Terminal 3 - Player X
-npm run start:client
-
-# Terminal 4 - Player O  
-npm run start:client
+# Double-click start-game.bat or run:
+start-game.bat
 ```
-
-3. **Play the game:**
-   - First client becomes Player X, second becomes Player O
-   - Enter moves as "row,col" (0-2 range)
-   - Watch real-time updates across both clients!
 
 ## 🎮 Game Protocol
 

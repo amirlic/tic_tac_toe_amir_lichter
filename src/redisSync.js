@@ -293,17 +293,25 @@ class RedisSyncManager {
    * @param {Error} error - Redis error
    */
   handleRedisError(clientType, error) {
-    console.error(`[${this.serverId}] Redis ${clientType} error:`, error.message);
+    // Only log first error and when reconnect attempts are made
+    if (this.reconnectAttempts === 0) {
+      console.warn(`[${this.serverId}] Redis ${clientType} unavailable - will operate without synchronization`);
+    }
     this.isConnected = false;
 
-    // Attempt reconnection
+    // Attempt reconnection with rate limiting
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
       this.reconnectAttempts++;
-      console.log(`[${this.serverId}] Attempting Redis reconnection (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+      if (this.reconnectAttempts === 1) {
+        console.log(`[${this.serverId}] Attempting Redis reconnection...`);
+      }
       
       setTimeout(() => {
         this.initialize();
-      }, 2000 * this.reconnectAttempts); // Exponential backoff
+      }, 5000 * this.reconnectAttempts); // Longer delays to reduce spam
+    } else if (this.reconnectAttempts === this.maxReconnectAttempts) {
+      console.warn(`[${this.serverId}] Redis connection failed after ${this.maxReconnectAttempts} attempts. Operating in standalone mode.`);
+      this.reconnectAttempts++; // Prevent further attempts
     }
   }
 
