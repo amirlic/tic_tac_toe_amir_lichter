@@ -34,33 +34,24 @@ function displayBoard() {
 async function startAutomatedGame() {
   console.log('🚀 Starting automated game...');
   
-  // Connect both players
-  await connectPlayers();
+  // Connect Player 1
+  console.log('🔗 Connecting Player 1 to Server A...');
+  player1 = new WebSocket('ws://localhost:3001');
   
-  // Wait for game to start
-  await waitForGameStart();
+  player1.on('open', () => {
+    console.log('✅ Player 1 connected to Server A');
+    player1.send(JSON.stringify({ type: 'join', playerId: 'auto-player-x' }));
+  });
   
-  // Play the game
-  playAutomaticGame();
-}
-
-function connectPlayers() {
-  return new Promise((resolve) => {
-    console.log('🔗 Connecting Player 1 to Server A...');
-    player1 = new WebSocket('ws://localhost:3001');
+  player1.on('message', (data) => {
+    const msg = JSON.parse(data.toString());
+    console.log('📨 P1 received:', msg.type, msg.message || '');
     
-    player1.on('open', () => {
-      console.log('✅ Player 1 connected to Server A');
-      player1.send(JSON.stringify({ type: 'join', playerId: 'auto-player-x' }));
-    });
-    
-    player1.on('message', (data) => {
-      const msg = JSON.parse(data.toString());
+    if (msg.type === 'joined') {
+      console.log(`🎯 Player 1 joined as ${msg.playerSymbol}`);
       
-      if (msg.type === 'joined') {
-        console.log(`🎯 Player 1 joined as ${msg.playerSymbol}`);
-        
-        // Now connect Player 2
+      // Connect Player 2 after Player 1 joins
+      setTimeout(() => {
         console.log('\n🔗 Connecting Player 2 to Server B...');
         player2 = new WebSocket('ws://localhost:3002');
         
@@ -71,63 +62,84 @@ function connectPlayers() {
         
         player2.on('message', (data) => {
           const msg2 = JSON.parse(data.toString());
+          console.log('📨 P2 received:', msg2.type, msg2.message || '');
           
           if (msg2.type === 'joined') {
             console.log(`🎯 Player 2 joined as ${msg2.playerSymbol}`);
             bothPlayersReady = true;
-            resolve();
+            
+            // Start playing immediately
+            setTimeout(() => {
+              console.log('\n🎮 Starting game moves...');
+              playAutomaticGame();
+            }, 1000);
           }
           
-          if (msg2.type === 'gameState') {
-            updateGameState(msg2);
+          if (msg2.type === 'gameState' && msg2.board) {
+            gameBoard = msg2.board;
+            displayBoard();
           }
           
           if (msg2.type === 'gameOver') {
             endGame(msg2);
           }
         });
+      }, 500);
+    } else if (msg.type === 'error') {
+      console.log(`⚠️  Error: ${msg.message}`);
+      // Maybe the game is full, let's try connecting player 2 anyway
+      if (msg.message && msg.message.includes('full')) {
+        setTimeout(() => {
+          console.log('\n🔗 Game full, trying Player 2 on Server B...');
+          player2 = new WebSocket('ws://localhost:3002');
+          
+          player2.on('open', () => {
+            console.log('✅ Player 2 connected to Server B');
+            player2.send(JSON.stringify({ type: 'join', playerId: 'auto-player-o' }));
+          });
+          
+          player2.on('message', (data) => {
+            const msg2 = JSON.parse(data.toString());
+            console.log('📨 P2 received:', msg2.type, msg2.message || '');
+            
+            if (msg2.type === 'joined') {
+              console.log(`🎯 Player 2 joined as ${msg2.playerSymbol}`);
+              bothPlayersReady = true;
+              
+              // Start playing
+              setTimeout(() => {
+                console.log('\n🎮 Starting cross-server game...');
+                playAutomaticGame();
+              }, 1000);
+            }
+            
+            if (msg2.type === 'gameState' && msg2.board) {
+              gameBoard = msg2.board;
+              displayBoard();
+            }
+            
+            if (msg2.type === 'gameOver') {
+              endGame(msg2);
+            }
+          });
+        }, 500);
       }
-      
-      if (msg.type === 'gameState') {
-        updateGameState(msg);
-      }
-      
-      if (msg.type === 'gameOver') {
-        endGame(msg);
-      }
-    });
+    }
+    
+    if (msg.type === 'gameState' && msg.board) {
+      gameBoard = msg.board;
+      displayBoard();
+    }
+    
+    if (msg.type === 'gameOver') {
+      endGame(msg);
+    }
   });
-}
-
-function waitForGameStart() {
-  return new Promise((resolve) => {
-    const checkGameStart = () => {
-      if (gameStarted) {
-        resolve();
-      } else {
-        setTimeout(checkGameStart, 100);
-      }
-    };
-    checkGameStart();
-  });
-}
-
-function updateGameState(msg) {
-  if (msg.board) {
-    gameBoard = msg.board;
-  }
-  
-  if (msg.gameStatus === 'playing' && !gameStarted && bothPlayersReady) {
-    gameStarted = true;
-    console.log('\n🚀 GAME STARTED!');
-    console.log('🎯 Cross-server real-time game in progress...');
-    displayBoard();
-  } else if (gameStarted && msg.board) {
-    displayBoard();
-  }
 }
 
 function playAutomaticGame() {
+  console.log('🎯 Starting automated moves...');
+  
   const gameMoves = [
     { player: player1, row: 0, col: 0, name: 'Player 1 (X)', desc: 'Top-left corner' },
     { player: player2, row: 1, col: 1, name: 'Player 2 (O)', desc: 'Center' },
@@ -159,11 +171,13 @@ function playAutomaticGame() {
       } else {
         console.error('❌ Player connection not ready');
       }
+    } else {
+      console.log('\n🎯 All moves completed! Waiting for game result...');
     }
   }
   
   // Start the first move
-  setTimeout(executeNextMove, 2000);
+  executeNextMove();
 }
 
 function endGame(msg) {
@@ -194,4 +208,4 @@ function endGame(msg) {
 }
 
 // Start the automated demo
-startAutomatedGame().catch(console.error);
+startAutomatedGame();
